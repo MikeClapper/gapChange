@@ -32,6 +32,8 @@ logger = None
 
 outfile = None
 skippedLines = 0
+# comment
+#comment
 
 #############  Dashboard Specific vars ###########
 dashboard_results = {}
