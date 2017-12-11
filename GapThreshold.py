@@ -1,172 +1,373 @@
 
 # -*- coding: utf-8 -*-
-import json
-import traceback
-import urllib
-import collections
-import urllib2
-import requests
-import jsonpickle
-import os
-import random
 import argparse
-
-import time
+import json
+import logging
 import platform
+import requests
 import ssl
 import sys
-import logging
-from argparse import ArgumentParser
-from Queue import Queue
-from threading import Thread
+import time
+#import urllib2
 
-import sys
-from enum import Enum
-
+"""
+#just here for reference purposes
+log levels
+CRITICAL	50
+ERROR	40
+WARNING	30
+INFO	20
+DEBUG	10
+NOTSET	0
+"""
 #######  Globals ######
 args = None
+content = None
+dashCount = 0
+findChartCalls = 0
 parser = None
 inCount = 0
-infile = None
 logger = None
-
+systemDashCount = 0
 outfile = None
-skippedLines = 0
-# comment
-#comment
+userDashCount = 0
 
 #############  Dashboard Specific vars ###########
-dashboard_results = {}
-dashboard_data = {}
-dashboard_info = []
-total_ok = 0
-total_retry = 0
+auth_token = None
+base_gap = 60
+content = None
+currentUrl = None
+dashboard_info =()
+dash_path_old="/api/dashboard/"
+#dash_path="/api/dashboard/"
+dash_path="/api/v2/dashboard/"
+dash_url=None
+header=None
+req = None
+response = None
+thisPage = None
+topDashboard = None
+topDashUrl = None
 
-#wavefront_url = 'https://try.wavefront.com'
-#auth_token ='18eb4c1b-2618-4f83-9f97-543582608f58'
+
 ############## Connection info ##################
 
 ##### Mike's trial account #######
 # dash_url = 'https://try.wavefront.com'
 # auth_token = '18eb4c1b-2618-4f83-9f97-543582608f58'
-
 #### pass in using -u <url> -t <token> on the command line
-dash_url=None
-auth_token = None
-
-TimedResponse = collections.namedtuple('TimedResponse',
-                                       'http_code',
-                                        'wavefront_cluster',
-                                        'content',
-                                        'time_to_first_byte',
-                                        'time_to_complete')
 
 def load_args():
     global parser
-    parser.add_argument("-i", help="input file file")
-    parser.add_argument("-o", help="Output file")
+    parser.add_argument("-g", help="new gap threshold in seconds (int)")
+    parser.add_argument("-c", help="old gap threshold in seconds (int)")
     parser.add_argument("-l",
                         help="[DEBUG, INFO, WARNING, ERROR, CRITICAL] ")
     parser.add_argument("-u",
-                        help="dashboard URL")
+                        help="account URL")
     parser.add_argument("-t",
                         help="auth Token")
-
+    parser.add_argument("-p", help="prompt Y/N for each dashboard", action="store_true")
+    parser.add_argument("-T", help="trial run - log only, no mods", action="store_true")
+    parser.add_argument("-j", help="dump before/after json to logfile (loglevel >= INFO)",
+                        action="store_true")
     parser.add_argument("-v", help="verbose mode", action="store_true")
     parser.add_argument("-d", help="debug mode", action="store_true")
 
+def get_page_v2(full_url, token):
+    global content
+    global header
+    global req
+    global response
+    global thisPage
+    #global wavefront_cluster
 
-def timed_api_request(url_base, url_path, token, discard_content=False):
-    """
-    Perform a http request to Wavefront API, capture execution time and WF-specific data
-    :param url_base: base URL (e.g. https://metrics.wavefront.com)
-    :param url_path: url path (e.g. /api/dashboard/)
-    :param token: authorization token
-    :param discard_content: if False, then response_content is returned
-    :return: timedresponse (tuple: http_code, wavefront_cluster, content, time_to_first_byte, time_to_complete)
-    """
-    logging.info("url: {}{}".format(url_base, url_path))
-    req = urllib2.Request("{}{}".format(url_base, url_path))
-    req.add_header('x-auth-token', token)
+    header = {'Authorization': 'Bearer ' + token, "Content-Type": "application/json"}
     start_time = time.time()
-    response = urllib2.urlopen(req)
-    ttfb = (time.time() - start_time) * 1000
-    content = response.read()
-    ttc = (time.time() - start_time) * 1000
-    ret = TimedResponse(http_code=response.getcode(),
-                        wavefront_cluster=response.info().getheader('x-wavefront-cluster'),
-                        content=content if not discard_content else None,
-                        time_to_first_byte=ttfb,
-                        time_to_complete=ttc)
-    return ret
+    try:
+        thisPage = requests.get(full_url, headers=header)
+    except requests.exceptions.RequestException as e:
+        print e
+        exit(-2)
 
-def load_dashboards():
-    global dashboard_results
-    global dashboard_data
-    global dashboard_info
-    global total_ok
-    global total_retry
+    if thisPage.status_code != 200:
+        print("ERROR: http status: {}".format(thisPage.status_code))
+        print("               url: {}".format(full_url))
+        exit(-1)
 
-    print "Starting loading dashboards"
+    logging.info("get_page: url: {} - code: {} - Elapsed time: {}".format(full_url,thisPage.status_code,
+                                                                          time.time() - start_time))
+    dashboard = json.loads(thisPage.content).get("response")
+    return dashboard
 
-    logging.info("Starting loading dashboards")
-    response = timed_api_request(dash_url, "/api/dashboard/", auth_token)
-    print(response)
+def update_dashboard(full_url,updated_dashboard):
+    global auth_token
+    global content
+    global header
+    global req
+    global token
+
+    logging.info('update_dashboard: {}  -  url: {}'.format(updated_dashboard['name'],full_url))
+
+    start_time = time.time()
+    try:
+            response = requests.put(full_url, json=updated_dashboard, headers=header)
+    except requests.exceptions.RequestException as e:
+        print e
+        exit(-2)
+
+    if thisPage.status_code != 200:
+        print("ERROR: http status: {}".format(thisPage.status_code))
+        print("               url: {}".format(full_url))
+        exit(-1)
+
+    logging.info("get_page: url: {} - code: {} - Elapsed time: {}".format(full_url, thisPage.status_code,
+                                                                          time.time() - start_time))
+
+def findCharts(thisDash):
+    global args
+    global auth
+    global base_gap
+    global findChartCalls
+    global content
+    global dashCount
+    global dash_info
+    global systemDashCount
+    global userDashCount
+    chart_count = 0
+    response = 'Y'
+    chart_count = 0
+    row_count = 0
+    section_count = 0
+    update_count = 0
+
+    #full_url = topDashUrl+thisDash+"/"
+    full_url = topDashUrl + thisDash
+    if (args.v):
+        print("full url: {}".format(full_url))
+
+    #thisBoard = get_page(full_url, auth_token)
+    thisBoard = get_page_v2(full_url, auth_token)
+    dashCount += 1
+    userDashCount +=1
+
+    for section in thisBoard['sections']:
+        logging.debug("section: {}  name: {}".format(section_count, section['name']))
+
+        for row in section['rows']:
+            logging.debug("section : {}   row: {} ".format(section_count, row_count))
+
+            for thischart in row['charts']:
+                logging.debug("chart name[{}]: {}".format(chart_count, thischart['name']))
+                chart_count +=1
+                oldgap =0
+                #if (args.j):
+                    #logging.info("====> Start dump - {}".format(thischart['name']))
+                    #jdump = json.loads(thisPage.content).get("response")
+                    #logging.info(json.dumps(thisBoard, sort_keys=True, indent=4))
+
+                #if gap threshold exists and is 'None' or 60 - reset it to new setting.
+                #if -c <int> is passed in use <int> at the base rather than 60
+                #if gap threshold is set to something other than base_gap, leave it alone
+                #if thischart['chartSettings'] and thischart['chartSettings'].get('type', 'line') == 'line':
+                if thischart.has_key('chartSettings'):
+                    if thischart['chartSettings'].has_key('expectedDataSpacing'):
+                        if (thischart['chartSettings'].get('expectedDataSpacing') == None):
+                            #remove old tuple, add new one
+                            thischart['chartSettings'].pop('expectedDataSpacing')
+                            thischart['chartSettings'].update({'expectedDataSpacing':args.g})
+                            logging.info("chart: {} gap: None updated to {}".format(thischart['name'],args.g))
+                            update_count += 1
+                        else:
+                             if (int(thischart['chartSettings'].get('expectedDataSpacing')) != int(base_gap)):
+                                 oldgap = thischart['chartSettings'].get('expectedDataSpacing')
+                                 thischart['chartSettings'].pop('expectedDataSpacing')
+                                 thischart['chartSettings'].update({'expectedDataSpacing': args.g})
+                                 logging.info("chart: {} gap: {} updated to {}".format(thischart['name'], oldgap, args.g))
+                                 update_count += 1
+                    else:
+                        #this chart didn't have a default setting
+                        thischart['chartSettings'].update({'expectedDataSpacing': args.g})
+                        logging.info("chart: {} gap: Undefined updated to {}".format(thischart['name'], args.g))
+                        update_count += 1
+                else:
+                    logging.info("No chartSettings found: dashboard: {} row: {} name: {}".format(thisDash, row_count,
+                                                                thischart['name']))
+
+            row_count += 1
+        section_count += 1
+        row_count = 0
+
+    if update_count:
+        print("INFO: Dashboard: {} charts: {} updates: {}".format(thisDash,chart_count, update_count))
+        logging.debug("full url: {}".format(full_url))
+
+        if (args.j):
+            logging.info("====> Start dump (Update) - {}".format(thisBoard['name']))
+            logging.info(json.dumps(thisBoard, sort_keys=True, indent=4))
+
+        if (args.T):
+            #this is just a test run - don't update
+            return(chart_count)
+
+        if (args.p):
+            #verify the user wants to update this dashboard
+            response = raw_input('Do you wish to update this dashboard (Y\\n): ')
+            if (response.lower() == 'y' or len(response) == 0):
+                update_dashboard(full_url, thisBoard)
+        else:
+            #just update
+            update_dashboard(full_url, thisBoard)
+    update_count = 0
+    logging.info("Dashboard: {} charts: {} updates: {}".format(thisDash,chart_count, update_count))
+    return chart_count
+
+def get_boards(myDash):
+    global topDashUrl
+    global dash_info
+    global thisPage
+    dashcount = 0
+
+    dash_info =[section for section in myDash["items"]]
+    for thisdash in dash_info:
+
+        #not all dashboards have "descriptions"
+        if thisdash.has_key('description'):
+            thisDescription = thisdash['description']
+        else:
+            thisDescription = "None"
+        #System dashboards are not updated
+        if thisdash['systemOwned'] == True:
+            dashType = 'System'
+        else:
+            dashType = 'User'
+            #dump user dashboard json to logs if we passed -j on command line
+            if (args.j):
+                logging.info("====> Start dump - {}\n".format(thisdash['name']))
+                jdump = json.loads(thisPage.content).get("response")
+                logging.info(json.dumps(jdump, sort_keys=True, indent=4))
+
+        dash_info[dashcount] = {"name" : thisdash['name'],
+                                "dashType" : dashType,
+                                "url": thisdash['url'],
+                                "description" : thisDescription,
+                                "chartCount" : 0
+                                }
+        dashcount +=1
 
 def main():
     global args
     global auth_token
-    global dashboard_results
+    global base_gap
+    global dashCount
+    global dash_info
     global dash_url
     global inCount
-    global infile
     global logger
     global outfile
     global parser
+    global systemDashCount
+    global topDashboard
+    global topDashUrl
+    global userDashCount
+    global wavefront_cluster
 
+    run_start_time =time.time()
     localtime = time.asctime()
-    print("run time : " + localtime)
-    # system, node, release, version, machine = platform.uname()
+
     thisPlatform = platform.platform()
-    ##print('node: {}  release: {}  version: {}  machine: {}  system: {}\n'.format(node, release, version, machine, system))
+    print("start time : " + localtime)
     print("Platform : {}".format(thisPlatform))
-    print("Processor: {}".format(platform.processor()))
     print("Python   : {}".format(platform.python_version()))
+
     parser = argparse.ArgumentParser()
     load_args()
     args = parser.parse_args()
+
+    if (args.d):
+        print("Debug: true")
     if (args.l):
         logging.basicConfig(filename='gapChange.log',
                             format='%(asctime)s - %(levelname)s -     %(message)s',
                             level=args.l)
         logging.info('Starting run: Script file: %s ', sys.argv[0])
+        logging.info('Command line args: {}'.format(sys.argv[1:]))
+        logging.info("run time : " + localtime)
+        logging.info("Platform : {}".format(thisPlatform))
+        logging.info("Python   : {}".format(platform.python_version()))
 
     if args.v: print("verbose = true")
 
-    print("script name: {}\n".format(sys.argv[0]))
+    print("script name : {}".format(sys.argv[0]))
+    print("runtime args: {}".format(sys.argv[1:]))
+    logging.info("ssl version: {}".format(ssl.OPENSSL_VERSION))
+    ssl_major, ssl_minor, ssl_fix, ssl_patch, ssl_status = ssl.OPENSSL_VERSION_INFO
+    if (ssl_major) < 1:
+        print('ERROR: OPENSSL version must be at least 1.x: this version:{}'.format(ssl.OPENSSL_VERSION))
 
-    if (args.d):
-        print("Debug: true")
+    print("ssl version: {}\n".format(ssl.OPENSSL_VERSION))
 
     # load/log dashboard and auth token
     if (args.u):
         dash_url = args.u
-
-    print("Dashboard URL: {}".format(dash_url))
-
     if (args.l):
         logging.info("Dashboard URL: {}".format(dash_url))
     if (args.t):
         auth_token = args.t
+    if (args.c):
+        base_gap = args.c
+
+    print("Dashboard URL: {}".format(dash_url))
     print ("auth token: {}".format(auth_token))
+
     if (args.l):
         logging.info("auth Token: {}".format(auth_token))
-    logging.info("ssl version: {}".format(ssl.OPENSSL_VERSION))
-    print("ssl version: {}".format(ssl.OPENSSL_VERSION))
-    load_dashboards()
 
+    if (args.g):
+        print("Base Gap Threshold: {}  New Default Gap Threshold: {}".format(base_gap, args.g))
+        base_gap = args.g
+        if (args.l):
+            logging.info("Base Gap Threshold: {}  New Default Gap Threshold: {}".format(base_gap, args.g))
+    else:
+        print("\nFatal Error: You must specify a new Default Gap Threshold using -g <seconds>")
+        if (args.l):
+            logging.critical("New default gap threshold value not specified")
+            logging.critical("Run terminated")
+        exit(-1)
+    logging.info("Starting to load dashboards")
 
+    topDashUrl = dash_url + dash_path
+
+    topDashboard = get_page_v2(topDashUrl, auth_token)
+    print('Progress: analysis started')
+    get_boards(topDashboard)
+
+    for thisOne in dash_info:
+        if thisOne['dashType'] == 'User':
+            thisOne['chartCount'] = findCharts(thisOne['url'])
+        else:
+            systemDashCount += 1
+            dashCount += 1
+            logging.info("System Dashboard - not updated: {}".format(thisOne['name']))
+        if (dashCount % 10 == 0):
+            print("Progress: dashboards checked: {}".format(dashCount))
+    run_time = (time.time() - run_start_time)
+    print("INFO: total Dashboards: {} - System Dashboards: {}  User Dashboards: {}".format(dashCount,
+                                                                                           systemDashCount,
+                                                                                           userDashCount))
+    print('\n\n****  User dashboards processed:')
+    for thisone in dash_info:
+
+        if thisone['dashType'] == 'User':
+          print("\nName: {} - chart count: {}\nDesc: {}  \nType: {}".format(thisone['name'],
+                                                           thisone['chartCount'],
+                                                            thisone['description'],
+                                                            thisone['dashType']))
+
+    print("\n\nTotal run time (seconds): {:.3f} ".format(run_time))
+    logging.info("Total run time (seconds): {} ".format(run_time))
 if __name__ == '__main__':
     main()
 logging.info('End run')
+print("Normal End of Run")
 sys.exit()
