@@ -1,2 +1,2 @@
 # gapChange
-Change default gap threshold for dashboards
+Change default gap threshold for Wavefront dashboards
