@@ -8,7 +8,6 @@ import requests
 import ssl
 import sys
 import time
-#import urllib2
 
 """
 #just here for reference purposes
@@ -31,6 +30,7 @@ logger = None
 systemDashCount = 0
 outfile = None
 userDashCount = 0
+version = 'A.1.1'
 
 #############  Dashboard Specific vars ###########
 auth_token = None
@@ -38,8 +38,6 @@ base_gap = 60
 content = None
 currentUrl = None
 dashboard_info =()
-dash_path_old="/api/dashboard/"
-#dash_path="/api/dashboard/"
 dash_path="/api/v2/dashboard/"
 dash_url=None
 header=None
@@ -48,14 +46,6 @@ response = None
 thisPage = None
 topDashboard = None
 topDashUrl = None
-
-
-############## Connection info ##################
-
-##### Mike's trial account #######
-# dash_url = 'https://try.wavefront.com'
-# auth_token = '18eb4c1b-2618-4f83-9f97-543582608f58'
-#### pass in using -u <url> -t <token> on the command line
 
 def load_args():
     global parser
@@ -80,7 +70,6 @@ def get_page_v2(full_url, token):
     global req
     global response
     global thisPage
-    #global wavefront_cluster
 
     header = {'Authorization': 'Bearer ' + token, "Content-Type": "application/json"}
     start_time = time.time()
@@ -286,19 +275,22 @@ def main():
 
     if (args.d):
         print("Debug: true")
+
     if (args.l):
         logging.basicConfig(filename='gapChange.log',
                             format='%(asctime)s - %(levelname)s -     %(message)s',
                             level=args.l)
         logging.info('Starting run: Script file: %s ', sys.argv[0])
         logging.info('Command line args: {}'.format(sys.argv[1:]))
+        logging.info('Script version: {}'.format(version))
         logging.info("run time : " + localtime)
         logging.info("Platform : {}".format(thisPlatform))
         logging.info("Python   : {}".format(platform.python_version()))
 
     if args.v: print("verbose = true")
 
-    print("script name : {}".format(sys.argv[0]))
+    print("script name : {} - version: {}".format(sys.argv[0], version))
+
     print("runtime args: {}".format(sys.argv[1:]))
     logging.info("ssl version: {}".format(ssl.OPENSSL_VERSION))
     ssl_major, ssl_minor, ssl_fix, ssl_patch, ssl_status = ssl.OPENSSL_VERSION_INFO
