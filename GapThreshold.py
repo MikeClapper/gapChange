@@ -30,7 +30,7 @@ logger = None
 systemDashCount = 0
 outfile = None
 userDashCount = 0
-version = 'A.1.1'
+version = 'A.2.0'
 
 #############  Dashboard Specific vars ###########
 auth_token = None
@@ -76,7 +76,7 @@ def get_page_v2(full_url, token):
     try:
         thisPage = requests.get(full_url, headers=header)
     except requests.exceptions.RequestException as e:
-        print e
+        print(e)
         exit(-2)
 
     if thisPage.status_code != 200:
@@ -102,7 +102,7 @@ def update_dashboard(full_url,updated_dashboard):
     try:
             response = requests.put(full_url, json=updated_dashboard, headers=header)
     except requests.exceptions.RequestException as e:
-        print e
+        print(e)
         exit(-2)
 
     if thisPage.status_code != 200:
@@ -159,8 +159,9 @@ def findCharts(thisDash):
                 #if -c <int> is passed in use <int> at the base rather than 60
                 #if gap threshold is set to something other than base_gap, leave it alone
                 #if thischart['chartSettings'] and thischart['chartSettings'].get('type', 'line') == 'line':
-                if thischart.has_key('chartSettings'):
-                    if thischart['chartSettings'].has_key('expectedDataSpacing'):
+
+                if'chartSettings' in thischart:
+                    if 'expectedDataSpacing' in thischart['chartSettings']:
                         if (thischart['chartSettings'].get('expectedDataSpacing') == None):
                             #remove old tuple, add new one
                             thischart['chartSettings'].pop('expectedDataSpacing')
@@ -201,7 +202,11 @@ def findCharts(thisDash):
 
         if (args.p):
             #verify the user wants to update this dashboard
-            response = raw_input('Do you wish to update this dashboard (Y\\n): ')
+            #check python version for prompt method.
+            if sys.version_info[0] < 3:
+                response = raw_input('Do you wish to update this dashboard (Y\\n): ')
+            else:
+                response = input('Do you wish to update this dashboard (Y\\n): ')
             if (response.lower() == 'y' or len(response) == 0):
                 update_dashboard(full_url, thisBoard)
         else:
@@ -221,7 +226,7 @@ def get_boards(myDash):
     for thisdash in dash_info:
 
         #not all dashboards have "descriptions"
-        if thisdash.has_key('description'):
+        if 'description' in thisdash:
             thisDescription = thisdash['description']
         else:
             thisDescription = "None"
@@ -261,7 +266,7 @@ def main():
     global userDashCount
     global wavefront_cluster
 
-    run_start_time =time.time()
+    run_start_time = time.time()
     localtime = time.asctime()
 
     thisPlatform = platform.platform()
